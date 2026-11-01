@@ -1,0 +1,21 @@
+.program engine_signals
+; 1 slot = 20 PIO clocks. Each FIFO word holds eight output bits:
+; first half: crank,G40,G163,cycle-marker; second half: same four pins.
+; Pull at beginning of each slot; GPIO2..4 updated on PIO clock edges.
+.wrap_target
+    pull block
+    out pins, 4 [8]
+    out pins, 4 [9]
+.wrap
+
+% c-sdk {
+static inline void engine_signals_program_init(PIO pio, uint sm, uint offset, uint base_pin) {
+    for (uint i=0; i<4; i++) pio_gpio_init(pio, base_pin+i);
+    pio_sm_set_consecutive_pindirs(pio, sm, base_pin, 4, true);
+    pio_sm_config cfg=engine_signals_program_get_default_config(offset);
+    sm_config_set_out_pins(&cfg, base_pin, 4);
+    sm_config_set_out_shift(&cfg, true, false, 32);
+    sm_config_set_fifo_join(&cfg, PIO_FIFO_JOIN_TX);
+    pio_sm_init(pio, sm, offset, &cfg);
+}
+%}

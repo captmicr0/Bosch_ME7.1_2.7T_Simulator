@@ -1,0 +1,23 @@
+.program crank60_2
+; 60 positions, 58 pulses. 20 PIO clocks per nominal tooth slot.
+; First 58 slots: high 10 clocks, low 10 clocks.
+; Last two missing slots: held low for 40 more clocks.
+.wrap_target
+    set x, 57
+pulse:
+    set pins, 1 [9]
+    set pins, 0 [8]
+    jmp x-- pulse
+    set pins, 0 [31]
+    nop [6]
+.wrap
+
+% c-sdk {
+static inline void crank60_2_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_gpio_init(pio, pin);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    pio_sm_config cfg = crank60_2_program_get_default_config(offset);
+    sm_config_set_set_pins(&cfg, pin, 1);
+    pio_sm_init(pio, sm, offset, &cfg);
+}
+%}

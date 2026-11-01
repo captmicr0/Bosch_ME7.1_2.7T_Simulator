@@ -1,0 +1,22 @@
+.program dac_stream
+; PIO0 SM0. MOSI=GP7 (OUT); side-set GP4..GP6 = LDAC, /CS, SCK.
+; One 32-bit DMA word per sample: MCP4922 A[15:0], B[15:0], MSB first.
+; 103 PIO cycles per dual-DAC sample; sampling period is set by SM divider.
+.side_set 3
+.wrap_target
+    pull block       side 0b011
+    set x, 15        side 0b001
+bit_a:
+    out pins, 1      side 0b001
+    nop              side 0b101
+    jmp x-- bit_a    side 0b001
+    nop              side 0b011
+    set x, 15        side 0b001
+bit_b:
+    out pins, 1      side 0b001
+    nop              side 0b101
+    jmp x-- bit_b    side 0b001
+    nop              side 0b011
+    nop              side 0b010  ; simultaneous analog update (LDAC low)
+    nop              side 0b011  ; restore idle
+.wrap

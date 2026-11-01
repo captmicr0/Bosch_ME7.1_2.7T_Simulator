@@ -1,0 +1,20 @@
+.program cam_stream
+; PIO0 SM1: OUT GP2..GP3 cam signals, SET GP22 marker.
+; Same 103-cycle period as dac_stream, starts in sync with SM0.
+; DMA word bits 0..1 cams; bit 2 720-degree marker.
+.wrap_target
+    pull block
+    out pins, 2
+    out x, 1
+    jmp !x marker_zero
+    set pins, 1
+    jmp delay
+marker_zero:
+    set pins, 0
+    nop
+delay:
+    nop [31]
+    nop [31]
+    nop [31]
+    nop
+.wrap
