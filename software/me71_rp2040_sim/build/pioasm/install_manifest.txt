@@ -1,0 +1,5 @@
+/home/dev/software/me71_rp2040_sim/build/pioasm-install/pioasm/pioasm
+/home/dev/software/me71_rp2040_sim/build/pioasm-install/pioasm/pioasmTargets.cmake
+/home/dev/software/me71_rp2040_sim/build/pioasm-install/pioasm/pioasmTargets-release.cmake
+/home/dev/software/me71_rp2040_sim/build/pioasm-install/pioasm/pioasmConfig.cmake
+/home/dev/software/me71_rp2040_sim/build/pioasm-install/pioasm/pioasmConfigVersion.cmake

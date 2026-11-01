@@ -14,10 +14,13 @@
 #include "engine_profile.h"
 #include "pico/multicore.h"
 #include "capture.pio.h"
+#include "status_led.pio.h"
+#include "pico/stdio_usb.h"
 #include "wave_dma.h"
 
 // Requested wiring: cam GP2/G40 and GP3/G163; DAC SPI0 CS=5 SCK=6 MOSI=7 LDAC=4.
-// Coil 1..6 GP10..GP15; injector 1..6 GP21..GP16 (reversed physical order).
+// Coil 1..6 GP10..GP15; injector 1..5 GP21..GP17; INJ6 GP26.
+// WS2812 onboard RGB GP16 (not a capture input).
 // GP22 is a local 720-degree marker, not an ECU connection.
 #define G40_GPIO 2u
 #define G163_GPIO 3u
@@ -27,6 +30,8 @@
 #define DAC_MOSI_GPIO 7u
 #define MON_GPIO 10u
 #define MARKER_GPIO 22u
+#define STATUS_LED_GPIO 16u
+#define STATUS_LED_SM 2u
 #define DAC_VREF_MV 2048u
 // For 2.048 V reference, 1x gain: midpoint 1.024 V and +/- 0.9 V on each leg.
 // Differential peak is ~1.8 V, before output resistors / shunt loading.
@@ -77,6 +82,54 @@ static uint64_t start_sample[CHANNELS] = {0};
 static bool active[CHANNELS] = {0};
 static uint16_t polarity_mask = 0x0fc0; // injector MOSFET output active HIGH; ignition MOSFET outputs active LOW
 static uint64_t event_drops = 0;
+static volatile uint32_t last_ecu_activity_ms = 0;
+static uint64_t status_last_sample_drops = 0;
+static uint64_t status_last_event_drops = 0;
+static uint32_t status_last_wave_underruns = 0;
+static bool error_latched = false;
+static uint32_t last_led_update_ms = 0;
+static uint32_t last_led_value = UINT32_MAX;
+
+// Standard one-wire WS2812, GRB order. Uses PIO0 SM2, leaving SM0/SM1
+// exclusively owned by crank/cam waveform generation. Never blocks capture.
+static void status_led_init(void) {
+    uint offset = pio_add_program(pio0, &status_led_program);
+    status_led_program_init(pio0, STATUS_LED_SM, offset, STATUS_LED_GPIO);
+}
+static void status_led_update(void) {
+    uint32_t now = to_ms_since_boot(get_absolute_time());
+    if ((uint32_t)(now - last_led_update_ms) < 25u) return;
+    last_led_update_ms = now;
+    if (drop_samples > status_last_sample_drops ||
+        event_drops > status_last_event_drops ||
+        wave_dma_underruns > status_last_wave_underruns) error_latched = true;
+    status_last_sample_drops = drop_samples;
+    status_last_event_drops = event_drops;
+    status_last_wave_underruns = wave_dma_underruns;
+
+    uint8_t red=0, green=0, blue=0;
+    if (error_latched) { // Latching faults avoids hiding a brief capture loss.
+        if ((now / 250u) & 1u) red = 36;
+    } else if (rpm == 0u) {
+        // CDC connected means a host has opened the USB serial interface.
+        // When disconnected, pulse blue slowly instead of staying solid.
+        if (stdio_usb_connected()) blue = 20;
+        else blue = (uint8_t)(3u + (now / 40u % 50u < 25u ?
+            (now / 40u % 50u) : 49u - (now / 40u % 50u)) / 2u);
+    } else if ((uint32_t)(now - last_ecu_activity_ms) < 65u) {
+        red=19; blue=25; // Purple ECU activity overlay.
+    } else if (rpm <= 400u) {
+        if ((now / 250u) & 1u) { red=26; green=15; } // Yellow cranking.
+    } else {
+        green=24; // Green running.
+    }
+    uint32_t grb=((uint32_t)green<<16)|((uint32_t)red<<8)|blue;
+    if (grb != last_led_value && !pio_sm_is_tx_fifo_full(pio0, STATUS_LED_SM)) {
+        pio_sm_put(pio0, STATUS_LED_SM, grb<<8);
+        last_led_value=grb;
+    }
+}
+
 
 typedef struct { uint64_t tick; uint8_t ch; uint8_t active; uint32_t duration_us;
     uint16_t angle; int16_t relative; uint8_t valid; uint32_t epoch; } event_t;
@@ -177,10 +230,10 @@ static void process_samples(void) {
     // Leave a few transfers behind DMA writer, avoiding the slot currently being updated.
     uint64_t limit = produced > 2 ? produced - 2 : 0;
     while (sample_read < limit) {
-        uint16_t raw = (uint16_t)(sample_ring[sample_read & RING_MASK] & 0x1fffu);
+        uint32_t raw = sample_ring[sample_read & RING_MASK] & 0x1ffffu;
         uint16_t now=0;
         for (uint c=0;c<6;c++) {
-            now |= (uint16_t)(((raw>>(11u-c))&1u)<<c);           // INJ1..6 GP21..16
+            now |= (uint16_t)(((raw>>(c == 5u ? 16u : 11u-c))&1u)<<c); // INJ1..5 GP21..17; INJ6 GP26
             now |= (uint16_t)(((raw>>c)&1u)<<(6u+c));          // COIL1..6 GP10..15
         }
         uint64_t tick = sample_read;
@@ -217,6 +270,7 @@ static void process_samples(void) {
         previous = now;
         while (changed) {
             uint c = (uint)__builtin_ctz((unsigned)changed);
+            last_ecu_activity_ms = to_ms_since_boot(get_absolute_time());
             changed &= changed - 1u;
             bool is_active = ((now >> c) & 1u) != ((polarity_mask >> c) & 1u);
             if (is_active) {
@@ -353,9 +407,10 @@ static void serial_poll(void) {
 
 int main(void) {
     stdio_init_all();
+    status_led_init();
     multicore_launch_core1(waveform_core);
-    uint cap_off=pio_add_program(cap_pio, &capture13_program);
-    capture13_program_init(cap_pio, cap_sm, cap_off, MON_GPIO);
+    uint cap_off=pio_add_program(cap_pio, &capture17_program);
+    capture17_program_init(cap_pio, cap_sm, cap_off, MON_GPIO);
     pio_sm_set_clkdiv(cap_pio, cap_sm, (float)clock_get_hz(clk_sys) / (2.0f*SAMPLE_HZ));
     dma_ch=dma_claim_unused_channel(true);
     dma_channel_config dc=dma_channel_get_default_config(dma_ch);
@@ -367,10 +422,11 @@ int main(void) {
     dma_channel_configure(dma_ch, &dc, sample_ring, &cap_pio->rxf[cap_sm], UINT32_MAX, true);
     pio_sm_set_enabled(cap_pio, cap_sm, true);
     absolute_time_t last_report=get_absolute_time();
-    puts("BOOT ME71 DMA PIO MCP4922 G40=GP2 G163=GP3 CS5 SCK6 MOSI7 LDAC4 INJ21..16 COIL10..15 REF22");
+    puts("BOOT ME71 DMA PIO MCP4922 G40=GP2 G163=GP3 CS5 SCK6 MOSI7 LDAC4 INJ1..5=GP21..17 INJ6=GP26 COIL10..15 REF22 LED16");
     while (true) {
         process_samples();
         serial_poll();
+        status_led_update();
         // Only one event every loop, to prioritize keeping up with DMA.
         if (stream && eq_tail!=eq_head) send_events();
         if (absolute_time_diff_us(last_report, get_absolute_time()) >= REPORT_MS*1000) {

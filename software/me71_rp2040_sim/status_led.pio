@@ -1,0 +1,26 @@
+.program status_led
+.side_set 1
+; WS2812 GRB, 800 kHz, 10 PIO cycles per bit.
+.wrap_target
+bitloop:
+    out x, 1       side 0 [2]
+    jmp !x zero    side 1 [1]
+    jmp bitloop    side 1 [4]
+bitloop:
+zero:
+    nop            side 0 [4]
+.wrap
+
+% c-sdk {
+static inline void status_led_program_init(PIO pio, uint sm, uint offset, uint pin) {
+    pio_gpio_init(pio, pin);
+    pio_sm_config cfg = status_led_program_get_default_config(offset);
+    sm_config_set_sideset_pins(&cfg, pin);
+    sm_config_set_out_shift(&cfg, false, true, 24);
+    sm_config_set_fifo_join(&cfg, PIO_FIFO_JOIN_TX);
+    sm_config_set_clkdiv(&cfg, (float)clock_get_hz(clk_sys) / (800000.0f * 10.0f));
+    pio_sm_init(pio, sm, offset, &cfg);
+    pio_sm_set_consecutive_pindirs(pio, sm, pin, 1, true);
+    pio_sm_set_enabled(pio, sm, true);
+}
+%}

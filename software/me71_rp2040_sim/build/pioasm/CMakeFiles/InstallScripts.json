@@ -1,0 +1,7 @@
+{
+	"InstallScripts" : 
+	[
+		"/home/dev/software/me71_rp2040_sim/build/pioasm/cmake_install.cmake"
+	],
+	"Parallel" : false
+}
