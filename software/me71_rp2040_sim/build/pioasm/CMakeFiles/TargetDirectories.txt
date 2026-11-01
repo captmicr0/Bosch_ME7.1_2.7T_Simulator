@@ -1,7 +1,0 @@
-/home/dev/software/me71_rp2040_sim/build/pioasm/CMakeFiles/pioasm.dir
-/home/dev/software/me71_rp2040_sim/build/pioasm/CMakeFiles/edit_cache.dir
-/home/dev/software/me71_rp2040_sim/build/pioasm/CMakeFiles/rebuild_cache.dir
-/home/dev/software/me71_rp2040_sim/build/pioasm/CMakeFiles/list_install_components.dir
-/home/dev/software/me71_rp2040_sim/build/pioasm/CMakeFiles/install.dir
-/home/dev/software/me71_rp2040_sim/build/pioasm/CMakeFiles/install/local.dir
-/home/dev/software/me71_rp2040_sim/build/pioasm/CMakeFiles/install/strip.dir

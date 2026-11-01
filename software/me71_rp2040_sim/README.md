@@ -1,12 +1,12 @@
-# GP26 injector remap and GP16 onboard RGB LED (latest revision)
+# GP23 onboard RGB LED — contiguous monitoring inputs restored
 
-**Wiring changes:** INJ1=GP21, INJ2=GP20, INJ3=GP19, INJ4=GP18, INJ5=GP17, **INJ6=GP26**. Coils 1–6 remain GP10–GP15. GP16 is now dedicated to the onboard **WS2812/NeoPixel-type single-wire RGB LED** (assumed GRB order, 800 kHz). All DAC and cam pins remain unchanged; GP22 remains the 720° marker.
+**Final wiring:** INJ1=GP21, INJ2=GP20, INJ3=GP19, INJ4=GP18, INJ5=GP17, INJ6=GP16; COIL1–6=GP10–GP15. The WS2812-compatible RGB LED is on **GP23**. GP22 remains the internal 720° marker. Cam/DAC GPIOs are unchanged.
 
-The capture PIO on PIO1 SM0 now reads **17 bits from GP10 through GP26** at 125 kSamples/s, ignoring GP16, GP23, GP24 and GP25; GP22 is the marker (sample bit 12), and GP26 is INJ6 (sample bit 16). Crucially, capture initialization **does not change GP16's GPIO function**, so the LED driver on PIO0 SM2 owns GP16. The logical channel order is unchanged: INJ1..INJ6 bits 0..5, COIL1..COIL6 bits 6..11. `POL 0xFC0` remains the default with active-low coil bits set. The polarity XOR/interpretation is performed **after** the raw physical GPIO bits are remapped.
+PIO1 SM0 captures **13 adjacent GPIOs GP10–GP22** using DMA. The RGB LED GP23 is outside the capture block and is driven by PIO0 SM2. Injector GPIOs are reordered into logical INJ1–6 before the active-low mask is applied. **`POL 0xFC0` still means all coils active-LOW and all injectors active-HIGH**, independent of the physical GPIO numbers.
 
-**Onboard status LED (GP16):** blue solid when firmware is idle (RPM=0) with USB CDC open; slow blue pulse when USB CDC is not open; flashing yellow during cranking RPM 100–400; solid green while running >400 RPM; a short purple (~65 ms) flash when an injector or coil changes state, overlaying the current state; flashing red (250 ms cadence) when a sample overrun or serial event-queue overflow is detected, latched until reboot. LED brightness is kept low; red error has highest priority. The WS2812 is fed by a dedicated PIO state machine, without blocking the crank, cam or capture engines. `stdio_usb_connected()` approximates PC-app connection via the CDC/DTR state, so other serial terminal software can also count as connected.
+**LED behavior:** Blue solid for RPM=0 with USB CDC connected; slow pulsing blue for RPM=0 with USB disconnected; yellow flashing for 100–400 RPM; green solid for RPM >400; purple for ~65 ms after detected injector/coil activity (overlays running/cranking status); red flashing for capture sample loss, event queue overflow, or waveform DMA underrun, latched until reboot. `stdio_usb_connected()` detects USB CDC/DTR, not specifically the Python GUI. The driver assumes an 800 kHz GRB-format WS2812-compatible LED; other LED hardware requires a different driver.
 
-**Hardware assumption:** GP16 is a single-wire WS2812-compatible onboard RGB LED. If the board instead has a discrete RGB LED with multiple pins or a different color byte order, the driver must be adapted. This firmware is not SDK-compiled or on-device validated; verify before attaching the ECU.
+**Validation:** Python syntax checks and ZIP integrity checks can be performed here, but the C/PIO firmware is not yet Pico-SDK compiled or hardware validated. Confirm the LED type and test waveform timing before connecting the ECU.
 
 ## PIO/DMA waveform engine (current revision)
 

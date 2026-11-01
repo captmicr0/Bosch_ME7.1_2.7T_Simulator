@@ -1,21 +1,22 @@
-.program capture17
-; Sample GP10..GP26: coils GP10..15, injector GP17..21/GP26, marker GP22.
+.program capture13
+; Sample GP10..GP22: coils 1..6 on GP10..15, injectors 6..1 on GP16..21,
+; and 720-degree reference GP22. GP23 RGB LED is OUTSIDE the capture range.
 .wrap_target
-    in pins, 17
+    in pins, 13
     push block
 .wrap
 
 % c-sdk {
-static inline void capture17_program_init(PIO pio, uint sm, uint offset, uint base_pin) {
+static inline void capture13_program_init(PIO pio, uint sm, uint offset, uint base_pin) {
     pio_sm_config cfg = capture13_program_get_default_config(offset);
     sm_config_set_in_pins(&cfg, base_pin);
     sm_config_set_in_shift(&cfg, false, false, 32);
     sm_config_set_fifo_join(&cfg, PIO_FIFO_JOIN_RX);
-    for (uint i = base_pin; i < base_pin + 17; ++i) {
-        if (i != 22 && i != 16) pio_gpio_init(pio, i); // GP22 must remain SIO output while PIO reads its pad
+    for (uint i = base_pin; i < base_pin + 13; ++i) {
+        if (i != 22u) pio_gpio_init(pio, i); // GP22 marker is driven elsewhere.
         gpio_set_pulls(i, false, false);
     }
-    pio_sm_set_consecutive_pindirs(pio, sm, base_pin, 17, false);
+    pio_sm_set_consecutive_pindirs(pio, sm, base_pin, 13, false);
     pio_sm_init(pio, sm, offset, &cfg);
 }
 %}
