@@ -52,6 +52,12 @@ class App:
         self.connection = None
         self.port = tk.StringVar(value=initial_port or "")
         self.rpm = tk.StringVar(value="800")
+        self.crank_rpm = tk.StringVar(value="250")
+        self.crank_hold = tk.StringVar(value="1.0")
+        self.ramp_seconds = tk.StringVar(value="3.0")
+        self.start_status = tk.StringVar(value="Stopped")
+        self.start_sequence = None
+        self.start_timer = None
         self.tdc = tk.StringVar(value="0")
         self.wheel_teeth = tk.StringVar(value="60")
         self.wheel_missing = tk.StringVar(value="2")
@@ -96,12 +102,24 @@ class App:
         ttk.Label(top, text="RPM:").grid(row=0,column=4,padx=(30,2))
         ttk.Entry(top, width=9, textvariable=self.rpm).grid(row=0,column=5)
         ttk.Button(top, text="Set RPM",command=self.set_rpm).grid(row=0,column=6,padx=5)
-        ttk.Button(top,text="STOP (0 RPM)",command=lambda:self.send("RPM 0")).grid(row=0,column=7,padx=5)
+        ttk.Button(top,text="STOP (0 RPM)",command=self.stop_engine).grid(row=0,column=7,padx=5)
         ttk.Checkbutton(top,text="Stream edges",variable=self.stream,command=self.set_stream).grid(row=1,column=0,columnspan=2,sticky="w",pady=8)
         ttk.Label(top,text="Active-low mask:").grid(row=1,column=3,sticky="e")
         ttk.Entry(top,textvariable=self.pol,width=10).grid(row=1,column=4)
         ttk.Button(top,text="Apply",command=self.set_polarity).grid(row=1,column=5)
         ttk.Label(top,textvariable=self.status).grid(row=1,column=6,columnspan=3,sticky="w")
+        start = ttk.LabelFrame(self.root, text="Engine start simulation (crank → ramp to idle)", padding=7)
+        start.pack(fill="x", padx=10, pady=(0,6))
+        ttk.Label(start, text="Cranking RPM:").grid(row=0,column=0,padx=3)
+        ttk.Entry(start, textvariable=self.crank_rpm,width=7).grid(row=0,column=1,padx=3)
+        ttk.Label(start, text="Crank hold (s):").grid(row=0,column=2,padx=3)
+        ttk.Entry(start, textvariable=self.crank_hold,width=7).grid(row=0,column=3,padx=3)
+        ttk.Label(start, text="Ramp to idle (s):").grid(row=0,column=4,padx=3)
+        ttk.Combobox(start, textvariable=self.ramp_seconds, values=("1","2","3","4","5"),width=6).grid(row=0,column=5,padx=3)
+        ttk.Label(start, text="Idle RPM = RPM field above").grid(row=0,column=6,padx=7)
+        ttk.Button(start,text="START ENGINE",command=self.start_engine).grid(row=0,column=7,padx=5)
+        ttk.Button(start,text="ABORT / STOP",command=self.stop_engine).grid(row=0,column=8,padx=5)
+        ttk.Label(start,textvariable=self.start_status).grid(row=1,column=0,columnspan=9,sticky="w",pady=(5,0))
         wheel=ttk.LabelFrame(self.root,text="Crank trigger wheel (nominal positions / missing positions per revolution)",padding=7)
         wheel.pack(fill="x",padx=10,pady=(0,6))
         ttk.Label(wheel,text="Total teeth:").grid(row=0,column=0,padx=3)
@@ -276,6 +294,7 @@ class App:
 
     def connect(self):
         if self.connection:
+            self.cancel_start_sequence()
             self.connection.close()
             self.connection=None
             self.connect_button.config(text="Connect")
@@ -294,6 +313,68 @@ class App:
         else:
             self.status.set("Not connected")
 
+    def cancel_start_sequence(self):
+        self.start_sequence = None
+        if self.start_timer is not None:
+            self.root.after_cancel(self.start_timer)
+            self.start_timer = None
+
+    def stop_engine(self):
+        self.cancel_start_sequence()
+        self.send("RPM 0")
+        self.start_status.set("Stopped (0 RPM)")
+
+    def start_engine(self):
+        if not self.connection:
+            messagebox.showerror("Start simulation", "Connect to the RP2040 first.")
+            return
+        try:
+            crank = int(self.crank_rpm.get())
+            idle = int(self.rpm.get())
+            hold = float(self.crank_hold.get())
+            ramp = float(self.ramp_seconds.get())
+            if not 100 <= crank <= 12000 or not 100 <= idle <= 12000:
+                raise ValueError()
+            if idle <= crank or not 0 <= hold <= 15 or not 1 <= ramp <= 5:
+                raise ValueError()
+        except ValueError:
+            messagebox.showerror("Start simulation", "Use 100–12000 cranking RPM, a higher idle RPM, 0–15 s crank hold, and 1–5 s ramp.")
+            return
+        self.cancel_start_sequence()
+        now = time.monotonic()
+        self.start_sequence = {"crank":crank,"idle":idle,"hold_until":now+hold,
+                               "ramp":ramp,"last_sent":crank}
+        self.send(f"RPM {crank}")
+        self.start_status.set(f"Cranking at {crank} RPM")
+        self.start_timer = self.root.after(50,self.advance_start_sequence)
+
+    def advance_start_sequence(self):
+        self.start_timer = None
+        seq = self.start_sequence
+        if seq is None:
+            return
+        if not self.connection:
+            self.cancel_start_sequence()
+            self.start_status.set("Disconnected — start cancelled")
+            return
+        elapsed = time.monotonic()-seq["hold_until"]
+        if elapsed < 0:
+            self.start_status.set(f"Cranking at {seq['crank']} RPM ({-elapsed:.1f}s remaining)")
+        else:
+            fraction = min(1.0,max(0.0,elapsed/seq["ramp"]))
+            # Ease-out gives a more natural rise to idle without an abrupt final step.
+            smooth = 1.0-(1.0-fraction)**2
+            target = round(seq["crank"] + (seq["idle"]-seq["crank"])*smooth)
+            if target != seq["last_sent"]:
+                self.send(f"RPM {target}")
+                seq["last_sent"] = target
+            if fraction >= 1.0:
+                self.start_status.set(f"Running at idle: {seq['idle']} RPM")
+                self.start_sequence = None
+                return
+            self.start_status.set(f"Starting → {target} RPM ({fraction*100:.0f}% ramp)")
+        self.start_timer = self.root.after(50,self.advance_start_sequence)
+
     def set_rpm(self):
         try:
             n=int(self.rpm.get())
@@ -301,6 +382,8 @@ class App:
         except ValueError:
             messagebox.showerror("RPM", "Use 0 or 100–12000 RPM.")
             return
+        self.cancel_start_sequence()
+        self.start_status.set(f"Manual RPM: {n}")
         self.send(f"RPM {n}")
 
     def set_wheel(self):
@@ -429,9 +512,11 @@ class App:
                 try:self.parse(value)
                 except (ValueError, IndexError):self.log_line("BAD DATA: "+value)
             elif kind=="error":
+                self.cancel_start_sequence()
                 self.log_line("SERIAL ERROR: "+value)
                 self.status.set("Serial error")
             elif kind=="disconnected":
+                self.cancel_start_sequence()
                 self.connection=None
                 self.connect_button.config(text="Connect")
                 self.status.set("Disconnected")
@@ -440,6 +525,7 @@ class App:
         self.root.after(25,self.poll)
 
     def close(self):
+        self.cancel_start_sequence()
         if self.connection: self.connection.close()
         self.root.destroy()
 

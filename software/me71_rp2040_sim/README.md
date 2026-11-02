@@ -170,3 +170,7 @@ vertically; events fade as new **engine cycles** arrive rather than scrolling.
 A pulse that crosses the ±360° wrap in relative mode is shown as separate edge
 marks rather than an incorrect long vertical line. No firmware changes are
 necessary: the existing `ANG` serial packets already carry both angles.
+
+## Engine start simulation (PC GUI)
+
+The controller includes an **Engine start simulation** panel. Set Cranking RPM (default 250), Crank hold (default 1.0 seconds), Ramp to idle (1–5 seconds, default 3), and target idle RPM in the main RPM field (default 800). Click START ENGINE to send `RPM 250`, hold that simulated cranking speed, then send ~20 RPM updates/second following an ease-out ramp to the target idle. ABORT / STOP or the main STOP button immediately cancels the pending PC sequence and sends `RPM 0`. Set RPM manually also cancels the sequence. The GUI timer is non-blocking so event logging and plots continue. The PC must remain connected and running throughout the ramp; this is not yet a firmware-autonomous starter sequence. The ECU will fire only if it accepts crank/cam timing and has any required authorization and power; starting at 250 RPM does not guarantee injection or ignition events.
