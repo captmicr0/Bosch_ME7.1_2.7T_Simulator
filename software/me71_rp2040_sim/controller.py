@@ -63,7 +63,8 @@ class App:
         self.wheel_missing = tk.StringVar(value="2")
         self.wheel_invert = tk.BooleanVar(value=False)
         self.stream = tk.BooleanVar(value=True)
-        self.pol = tk.StringVar(value="0xFC0")
+        self.inj_active_low = tk.StringVar(value="000000")
+        self.coil_active_low = tk.StringVar(value="111111")
         self.cam_vars = {"G40": [tk.StringVar(value="120"), tk.StringVar(value="60"), tk.BooleanVar(value=False)],
                          "G163": [tk.StringVar(value="480"), tk.StringVar(value="60"), tk.BooleanVar(value=False)]}
         self.status = tk.StringVar(value="Disconnected")
@@ -99,15 +100,13 @@ class App:
         ttk.Button(top, text="Refresh", command=self.refresh_ports).grid(row=0,column=2,padx=4)
         self.connect_button = ttk.Button(top, text="Connect", command=self.connect)
         self.connect_button.grid(row=0,column=3,padx=8)
-        ttk.Label(top, text="RPM:").grid(row=0,column=4,padx=(30,2))
-        ttk.Entry(top, width=9, textvariable=self.rpm).grid(row=0,column=5)
-        ttk.Button(top, text="Set RPM",command=self.set_rpm).grid(row=0,column=6,padx=5)
-        ttk.Button(top,text="STOP (0 RPM)",command=self.stop_engine).grid(row=0,column=7,padx=5)
         ttk.Checkbutton(top,text="Stream edges",variable=self.stream,command=self.set_stream).grid(row=1,column=0,columnspan=2,sticky="w",pady=8)
-        ttk.Label(top,text="Active-low mask:").grid(row=1,column=3,sticky="e")
-        ttk.Entry(top,textvariable=self.pol,width=10).grid(row=1,column=4)
-        ttk.Button(top,text="Apply",command=self.set_polarity).grid(row=1,column=5)
-        ttk.Label(top,textvariable=self.status).grid(row=1,column=6,columnspan=3,sticky="w")
+        ttk.Label(top,text="Injector active-low (INJ6→INJ1):").grid(row=1,column=2,sticky="e",padx=(8,2))
+        ttk.Entry(top,textvariable=self.inj_active_low,width=8).grid(row=1,column=3)
+        ttk.Label(top,text="Coil active-low (COIL6→COIL1):").grid(row=1,column=4,sticky="e",padx=(8,2))
+        ttk.Entry(top,textvariable=self.coil_active_low,width=8).grid(row=1,column=5)
+        ttk.Button(top,text="Apply polarity",command=self.set_polarity).grid(row=1,column=6,padx=5)
+        ttk.Label(top,textvariable=self.status).grid(row=1,column=7,sticky="w")
         start = ttk.LabelFrame(self.root, text="Engine start simulation (crank → ramp to idle)", padding=7)
         start.pack(fill="x", padx=10, pady=(0,6))
         ttk.Label(start, text="Cranking RPM:").grid(row=0,column=0,padx=3)
@@ -116,10 +115,12 @@ class App:
         ttk.Entry(start, textvariable=self.crank_hold,width=7).grid(row=0,column=3,padx=3)
         ttk.Label(start, text="Ramp to idle (s):").grid(row=0,column=4,padx=3)
         ttk.Combobox(start, textvariable=self.ramp_seconds, values=("1","2","3","4","5"),width=6).grid(row=0,column=5,padx=3)
-        ttk.Label(start, text="Idle RPM = RPM field above").grid(row=0,column=6,padx=7)
-        ttk.Button(start,text="START ENGINE",command=self.start_engine).grid(row=0,column=7,padx=5)
-        ttk.Button(start,text="ABORT / STOP",command=self.stop_engine).grid(row=0,column=8,padx=5)
-        ttk.Label(start,textvariable=self.start_status).grid(row=1,column=0,columnspan=9,sticky="w",pady=(5,0))
+        ttk.Label(start, text="Idle / manual RPM:").grid(row=0,column=6,padx=(10,3))
+        ttk.Entry(start, textvariable=self.rpm,width=8).grid(row=0,column=7,padx=3)
+        ttk.Button(start,text="Set RPM",command=self.set_rpm).grid(row=0,column=8,padx=5)
+        ttk.Button(start,text="START ENGINE",command=self.start_engine).grid(row=0,column=9,padx=5)
+        ttk.Button(start,text="ABORT / STOP",command=self.stop_engine).grid(row=0,column=10,padx=5)
+        ttk.Label(start,textvariable=self.start_status).grid(row=1,column=0,columnspan=11,sticky="w",pady=(5,0))
         wheel=ttk.LabelFrame(self.root,text="Crank trigger wheel (nominal positions / missing positions per revolution)",padding=7)
         wheel.pack(fill="x",padx=10,pady=(0,6))
         ttk.Label(wheel,text="Total teeth:").grid(row=0,column=0,padx=3)
@@ -420,12 +421,15 @@ class App:
     def set_stream(self): self.send(f"STREAM {int(self.stream.get())}")
 
     def set_polarity(self):
-        try:
-            mask=int(self.pol.get(),0)
-            if not 0 <= mask <= 0xfff: raise ValueError()
-        except ValueError:
-            messagebox.showerror("Polarity", "Use a 12-bit mask, e.g. 0x03F.")
+        """Combine two logical six-bit masks; physical GPIO ordering is handled in firmware."""
+        inj = self.inj_active_low.get().strip()
+        coil = self.coil_active_low.get().strip()
+        if (len(inj) != 6 or len(coil) != 6
+                or any(bit not in "01" for bit in inj + coil)):
+            messagebox.showerror("Polarity", "Enter exactly six binary digits (0 or 1) for each group.\n"
+                                 "Leftmost bit = cylinder 6; rightmost bit = cylinder 1.")
             return
+        mask = (int(coil, 2) << 6) | int(inj, 2)
         self.send(f"POL {mask}")
 
     def log_line(self,line):
