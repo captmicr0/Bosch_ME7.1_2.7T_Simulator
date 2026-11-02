@@ -4,9 +4,9 @@
 .wrap_target
 bitloop:
     out x, 1       side 0 [2]
-    jmp !x zero    side 1 [1]
+    jmp !x bit_zero    side 1 [1]
     jmp bitloop    side 1 [4]
-zero:
+bit_zero:
     nop            side 0 [4]
 .wrap
 
