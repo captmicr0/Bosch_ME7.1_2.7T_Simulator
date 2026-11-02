@@ -47,7 +47,8 @@ class App:
     def __init__(self, root, initial_port=None):
         self.root = root
         root.title("Audi 2.7T ME7.1 | RP2040 12-channel bench monitor")
-        root.geometry("1200x960")
+        # Set width from the Engine Start Simulation controls after Tk measures them.
+        # Do not impose the previous oversized 1200-pixel window.
         self.inbox = queue.Queue()
         self.connection = None
         self.port = tk.StringVar(value=initial_port or "")
@@ -85,6 +86,7 @@ class App:
         self.raster_max_epoch = None
         self.raster_dirty = True
         self.build()
+        root.after_idle(self.fit_window_to_start_controls)
         self.refresh_ports()
         if initial_port:
             self.connect()
@@ -109,6 +111,7 @@ class App:
         ttk.Label(top,textvariable=self.status).grid(row=1,column=7,sticky="w")
         start = ttk.LabelFrame(self.root, text="Engine start simulation (crank → ramp to idle)", padding=7)
         start.pack(fill="x", padx=10, pady=(0,6))
+        self.start_frame = start
         ttk.Label(start, text="Cranking RPM:").grid(row=0,column=0,padx=3)
         ttk.Entry(start, textvariable=self.crank_rpm,width=7).grid(row=0,column=1,padx=3)
         ttk.Label(start, text="Crank hold (s):").grid(row=0,column=2,padx=3)
@@ -199,6 +202,16 @@ class App:
         self.log.configure(yscrollcommand=scrollbar.set)
         self.log.pack(side="left",fill="both",expand=True)
         scrollbar.pack(side="right",fill="y")
+
+    def fit_window_to_start_controls(self):
+        """Size the window just past the right edge of ABORT / STOP."""
+        self.root.update_idletasks()
+        width = self.start_frame.winfo_reqwidth() + 20  # 10 px outside each side
+        # Keep the previous usable vertical space but avoid an oversized width.
+        screen_width = self.root.winfo_screenwidth()
+        width = min(width, screen_width)
+        height = min(960, self.root.winfo_screenheight() - 80)
+        self.root.geometry(f"{width}x{height}")
 
     def clear_raster(self):
         self.raster_events.clear()
